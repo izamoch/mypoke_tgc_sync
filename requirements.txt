@@ -1,0 +1,7 @@
+httpx
+sqlalchemy
+pillow
+imagehash
+python-dotenv
+psycopg2-binary
+sqlalchemy[postgresql]
