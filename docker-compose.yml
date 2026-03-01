@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  sync_job:
+    build: .
+    image: mypoke_tgc_sync:latest
+    container_name: poke_sync_job
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    restart: "no" # Runs once and exits. Trigger manually or via n8n cron.
