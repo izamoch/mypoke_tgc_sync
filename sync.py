@@ -1,17 +1,15 @@
-import httpx
 import asyncio
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
-import models, database
-from utils.phash import calculate_phash
-import json
 import datetime
-import random
-from datetime import timedelta
-
-
 import hashlib
+import json
 import logging
+import random
+
+import httpx
+from sqlalchemy.orm import Session
+
+import models
+from utils.phash import calculate_phash
 
 TCGDEX_API = "https://api.tcgdex.net/v2/en"
 
@@ -200,6 +198,9 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
                     break
 
                 try:
+                    # Random sleep to masquerade as human/prevent rate-limiting
+                    await asyncio.sleep(random.uniform(0.1, 0.6))
+
                     # Fetch Full Details
                     detail_res = await client.get(f"{TCGDEX_API}/cards/{card_summary['id']}")
                     detail_res.raise_for_status()
@@ -324,6 +325,9 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                 )
 
             try:
+                # Random sleep to prevent API saturation
+                await asyncio.sleep(random.uniform(0.2, 0.7))
+
                 response = await client.get(f"{TCGDEX_API}/cards/{card.id}")
                 if response.status_code == 404:
                     card.last_price_check_at = datetime.datetime.utcnow()
@@ -384,11 +388,11 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
 
     # --- FINAL REPORT ---
     print("\n" + "=" * 40)
-    print(f"✅ PRICE SYNC COMPLETED REPORT")
+    print("✅ PRICE SYNC COMPLETED REPORT")
     print("=" * 40)
     print(f"Total Checked:      {checked_count}/{total_to_check}")
     print("-" * 20)
-    print(f"Strategy Breakdown:")
+    print("Strategy Breakdown:")
     for k, v in strat_stats.items():
         if v > 0:
             print(f"  - {k:<15}: {v}")
