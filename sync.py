@@ -360,6 +360,13 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
 
                 card_updated = False
                 
+                # 0. Backfill dex_id from details if missing
+                if not card.dex_id:
+                    dex_ids = details.get("dexId", [])
+                    if dex_ids and isinstance(dex_ids, list):
+                        card.dex_id = dex_ids[0]
+                        card_updated = True
+                
                 # 3. Lore Enrichment (PokéAPI) - Once per unique Dex ID
                 if card.dex_id and not card.flavor_text:
                     # Basic memoization per sync run
