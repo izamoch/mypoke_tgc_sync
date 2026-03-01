@@ -73,39 +73,6 @@ def start_sync_flag():
     SHOULD_STOP = False
 
 
-    to_delete = []
-
-    for record in history:
-        age_days = (now - record.timestamp).days
-
-        if age_days <= 7:
-            # 1 record per day
-            bucket = f"d_{age_days}"  # d_0, d_1, ...
-        elif age_days <= 30:
-            # 2 records per week -> Bucket by 3-day chunks
-            # 0-3, 4-7... relative to week? No, let's just bucket by (days // 3)
-            # This ensures roughly 2-3 per week.
-            bucket = f"w_{age_days // 4}"
-        elif age_days <= 365:
-            # 2 records per month -> Bucket by 15 days
-            bucket = f"m_{age_days // 15}"
-        else:
-            # Older than a year: Delete
-            to_delete.append(record)
-            continue
-
-        if bucket in seen_buckets:
-            to_delete.append(record)
-        else:
-            seen_buckets.add(bucket)
-
-    if to_delete:
-        # Batch delete
-        for record in to_delete:
-            db.delete(record)
-        # We don't commit here to allow caller to bulk commit
-
-
 async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
     """
     Incremental Sync:
