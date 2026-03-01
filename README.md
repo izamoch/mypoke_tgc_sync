@@ -69,7 +69,7 @@ docker build -t mypoke_tgc_sync .
 ```
 
 ### 2. Configure Environment Variables
-Create a `.env` file or pass the `DATABASE_URL` directly.
+Create a `.env` file or pass the variables directly.
 For local SQLite:
 ```env
 DATABASE_URL=sqlite:///./data/poke_tgc.sqlite
@@ -77,6 +77,12 @@ DATABASE_URL=sqlite:///./data/poke_tgc.sqlite
 For PostgreSQL:
 ```env
 DATABASE_URL=postgresql://user:password@host:port/dbname
+```
+
+**Webhook Notifications (Optional)**:
+If you want to receive an automated JSON payload containing a Markdown and HTML report after every run (e.g. for **n8n** or Discord), set:
+```env
+REPORT_WEBHOOK_URL=https://n8n.yourserver.com/webhook/poke-sync
 ```
 
 ### 3. Run the Container
