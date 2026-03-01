@@ -334,9 +334,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                     db.commit()
                     continue
 
-                response.try_check_status = (
-                    response.raise_for_status()
-                )  # Just to be safe if raise_for_status is needed, but we catch generic exception
+                # Just to be safe if raise_for_status is needed, but we catch generic exception
                 response.raise_for_status()
                 details = response.json()
 
