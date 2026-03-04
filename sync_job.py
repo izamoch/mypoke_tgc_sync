@@ -148,16 +148,18 @@ async def run_sync_job(force_prices: bool = False):
     start_time = datetime.utcnow()
     logger.info(f"Starting scheduled PokeTCG Sync Job at {start_time} (UTC)")
 
-    db = SessionLocal()
     sync.start_sync_flag()
-
     cards_metrics = {}
     prices_metrics = {}
 
     try:
         # Step 1: Sync Sets and New Cards
         logger.info("Executing Phase 1: Sets and Cards synchronization...")
-        cards_metrics = await sync.sync_sets_and_cards(db)
+        db1 = SessionLocal()
+        try:
+            cards_metrics = await sync.sync_sets_and_cards(db1)
+        finally:
+            db1.close()
 
         if sync.SHOULD_STOP:
             logger.warning("Sync stopped prematurely during Cards phase. Exiting.")
@@ -165,7 +167,11 @@ async def run_sync_job(force_prices: bool = False):
 
         # Step 2: Sync Prices based on Temperature Strategy
         logger.info("Executing Phase 2: Price synchronization...")
-        prices_metrics = await sync.sync_prices(db, force_prices=force_prices)
+        db2 = SessionLocal()
+        try:
+            prices_metrics = await sync.sync_prices(db2, force_prices=force_prices)
+        finally:
+            db2.close()
 
         end_time = datetime.utcnow()
         duration = (end_time - start_time).total_seconds()
@@ -176,7 +182,6 @@ async def run_sync_job(force_prices: bool = False):
         end_time = datetime.utcnow()
     finally:
         generate_report(start_time, datetime.utcnow(), cards_metrics, prices_metrics)
-        db.close()
 
 
 if __name__ == "__main__":

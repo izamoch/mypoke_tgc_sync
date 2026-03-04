@@ -26,10 +26,6 @@ def determine_check_strategy(card: models.Card) -> str:
     """
     now = datetime.datetime.utcnow()
 
-    # 0. Missing Critical Enrichment? -> FORCE CHECK
-    if not card.flavor_text:
-        return "ENRICH"
-
     # 1. Never checked? -> IMMEDIATE
     if not card.last_price_check_at:
         return "NEW"
@@ -98,8 +94,10 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
             response.raise_for_status()
             sets_data = response.json()
 
-            # Optimization: Fetch all existing Set IDs
-            existing_set_ids = {s.id for s in db.query(models.Set.id).all()}
+            # Optimization: Fetch all existing Set IDs in batches
+            existing_set_ids = set()
+            for s in db.query(models.Set.id).yield_per(1000):
+                existing_set_ids.add(s[0])
 
             metrics = {"new_sets": 0, "new_cards": 0, "cards_processed": 0, "errors": []}
             new_sets_count = 0
@@ -133,9 +131,11 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
             response.raise_for_status()
             all_cards_summary = response.json()
 
-            # Optimization: Fetch all existing Card IDs
+            # Optimization: Fetch all existing Card IDs in batches to avoid RAM saturation
             # If DB is huge, fetching check set is safer than 20k individual queries
-            existing_card_ids = {c.id for c in db.query(models.Card.id).all()}
+            existing_card_ids = set()
+            for c in db.query(models.Card.id).yield_per(2000):
+                existing_card_ids.add(c[0])
 
             # Identify NEW cards
             new_cards_summary = [c for c in all_cards_summary if c["id"] not in existing_card_ids]
@@ -158,6 +158,10 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
 
                     # Fetch Full Details
                     detail_res = await client.get(f"{TCGDEX_API}/cards/{card_summary['id']}")
+                    if detail_res.status_code == 404:
+                        print(f"Warning: Card {card_summary['id']} returned 404 on details fetch. Skipping.")
+                        continue
+                        
                     detail_res.raise_for_status()
                     details = detail_res.json()
 
@@ -240,24 +244,40 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     print(f"[{start_time}] Starting Price Sync (Smart Strategy)...")
     errors = []
 
-    # Pre-fetch all cards
-    all_cards = db.query(models.Card).all()
+    # Avoid fetching all cards at once! We will use yield_per(1000) for batched query fetching.
+    # We must count the total cards first to know how many to process.
+    total_cards = db.query(models.Card.id).count()
 
-    # Filter cards to check
-    # AND gather strat stats
-    cards_to_check = []
+    # Pre-flight to get strategy stats and the subset of IDs that need updating
+    # We fetch only the necessary columns to keep memory low.
+    card_ids_to_check = []
     strat_stats = {"NEW": 0, "HOT": 0, "STABLE": 0, "STABLE_SAFETY": 0, "COLD": 0, "COLD_SAFETY": 0, "ENRICH": 0}
 
-    for c in all_cards:
-        strat = determine_check_strategy(c)
-        if strat != "SKIP":
-            cards_to_check.append(c)
+    # Column-limited query for performance
+    query = db.query(
+        models.Card.id, 
+        models.Card.last_price_check_at, 
+        models.Card.updated_at, 
+        models.Card.flavor_text
+    )
+
+    for cid, last_check, updated, flavor in query.all():
+        # Temporary card to reuse existing strategy logic
+        temp_card = models.Card(
+            id=cid, 
+            last_price_check_at=last_check, 
+            updated_at=updated, 
+            flavor_text=flavor
+        )
+        strat = determine_check_strategy(temp_card)
+        if force_prices or strat != "SKIP":
+            card_ids_to_check.append(cid)
             strat_stats[strat] = strat_stats.get(strat, 0) + 1
 
-    total_to_check = len(cards_to_check)
+    total_to_check = len(card_ids_to_check)
     log.cards_processed = total_to_check
 
-    print(f"Total Cards: {len(all_cards)}. Scheduled for check: {total_to_check}")
+    print(f"Total Cards: {total_cards}. Scheduled for check: {total_to_check}")
     print(
         f"Breakdown: ENRICH={strat_stats['ENRICH']}, HOT={strat_stats['HOT']}, STABLE={strat_stats['STABLE']}, COLD={strat_stats['COLD']}, NEW={strat_stats['NEW']}"
     )
@@ -277,11 +297,16 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     async with httpx.AsyncClient() as client:
-        for i, card in enumerate(cards_to_check, 1):
+        # Instead of looping over card objects, we loop over the IDs we filtered, and query them when needed
+        for i, cid in enumerate(card_ids_to_check, 1):
             if SHOULD_STOP:
                 print("Sync stopping explicitly (Prices loop).")
                 log.status = "stopped"
                 break
+                
+            card = db.query(models.Card).filter(models.Card.id == cid).first()
+            if not card:
+                continue
 
             checked_count += 1
 
@@ -309,15 +334,16 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                 card.last_price_check_at = datetime.datetime.utcnow()
 
                 pricing = details.get("pricing")
-                if not pricing:
+                if not pricing or not isinstance(pricing, dict):
                     db.commit()
                     continue
 
                 prices_found = {}
                 
                 # 1. TCGPlayer (Main Prices)
-                if "tcgplayer" in pricing:
-                    for variant, p_data in pricing["tcgplayer"].items():
+                tcg_pricing = pricing.get("tcgplayer")
+                if tcg_pricing and isinstance(tcg_pricing, dict):
+                    for variant, p_data in tcg_pricing.items():
                         if not isinstance(p_data, dict):
                             continue
 
@@ -342,9 +368,11 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                             }
 
                 # 2. Cardmarket Trends
-                if "cardmarket" in pricing:
-                    cm = pricing["cardmarket"]
-                    for variant, cm_data in cm.items():
+                cm_pricing = pricing.get("cardmarket")
+                if cm_pricing and isinstance(cm_pricing, dict):
+                    # Sometimes Cardmarket is a single dict, sometimes it has variants?
+                    # TCGDex docs say it's variants if multiple, but let's be robust.
+                    for variant, cm_data in cm_pricing.items():
                         if not isinstance(cm_data, dict):
                             continue
                         
@@ -397,6 +425,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                 db.commit()
 
             except Exception as e:
+                db.rollback()
                 err_type = type(e).__name__
                 stats["errors_by_type"][err_type] = stats["errors_by_type"].get(err_type, 0) + 1
                 # Keep errors list small for DB log
@@ -434,7 +463,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     print("=" * 40 + "\n")
 
     return {
-        "total_cards": len(all_cards),
+        "total_cards": total_cards,
         "checked_count": checked_count,
         "scheduled_for_check": total_to_check,
         "updated_count": updated_count,
