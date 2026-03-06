@@ -175,6 +175,22 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
                     # Compute pHash (Expensive operation, only for NEW cards)
                     phash = await calculate_phash(image_url_high) if image_url_high else None
 
+                    # Extract Dex ID & Fetch Lore
+                    dex_ids = details.get("dexId", [])
+                    dex_id = dex_ids[0] if dex_ids and isinstance(dex_ids, list) else None
+                    
+                    flavor_text = None
+                    evolutions = None
+                    if dex_id:
+                        if "pokeapi_cache" not in metrics:
+                            metrics["pokeapi_cache"] = {}
+                        if dex_id not in metrics["pokeapi_cache"]:
+                            print(f"Enriching NEW Dex ID {dex_id} from PokéAPI...")
+                            flavor, evos = await fetch_pokeapi_data(dex_id)
+                            # Use "" to distinguish 'checked but missing' from 'unchecked' (None/NULL)
+                            metrics["pokeapi_cache"][dex_id] = (flavor if flavor else "", json.dumps(evos) if evos else None)
+                        flavor_text, evolutions = metrics["pokeapi_cache"][dex_id]
+
                     new_card = models.Card(
                         id=details["id"],
                         name=details["name"],
@@ -182,6 +198,9 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
                         image_url=image_url_low,
                         phash=phash,
                         # Expanded Metadata
+                        dex_id=dex_id,
+                        flavor_text=flavor_text,
+                        evolutions=evolutions,
                         rarity=details.get("rarity"),
                         category=details.get("category"),
                         illustrator=details.get("illustrator"),
@@ -395,8 +414,24 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                         card.dex_id = dex_ids[0]
                         card_updated = True
                 
-                # PokéAPI Lore Enrichment logic removed as per user request to only update prices.
-
+                # 3. Lore Enrichment (PokéAPI) - Once per unique Dex ID
+                # If flavor_text is strictly None, we haven't checked it yet. If it's "", we checked and found nothing.
+                if card.dex_id and card.flavor_text is None:
+                    if "pokeapi_cache" not in stats:
+                        stats["pokeapi_cache"] = {}
+                    
+                    if card.dex_id not in stats["pokeapi_cache"]:
+                        print(f"Enriching Dex ID {card.dex_id} from PokéAPI...")
+                        flavor, evos = await fetch_pokeapi_data(card.dex_id)
+                        # Store in cache: empty string "" if not found, to mark as checked
+                        stats["pokeapi_cache"][card.dex_id] = (flavor if flavor else "", json.dumps(evos) if evos else None)
+                        stats["metadata_enriched"] = stats.get("metadata_enriched", 0) + 1
+                    
+                    c_flav, c_evos = stats["pokeapi_cache"][card.dex_id]
+                    card.flavor_text = c_flav
+                    if c_evos:
+                        card.evolutions = c_evos
+                    card_updated = True
 
                 for variant, p_vals in prices_found.items():
                     changed = await update_card_price(db, card.id, variant, p_vals, log, details=details)
