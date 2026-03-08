@@ -30,12 +30,14 @@ def determine_check_strategy(card: models.Card) -> str:
     if not card.last_price_check_at:
         return "NEW"
 
-    last_check_days = (now - card.last_price_check_at).days
+    # Use total_seconds to get fractional days instead of integer flooring
+    last_check_days = (now - card.last_price_check_at).total_seconds() / 86400.0
     last_update_days = (now - card.updated_at).days
 
     # 1. HOT
     if last_update_days < 7:
-        return "HOT" if last_check_days >= 1 else "SKIP"
+        # Check if approx 1 day has passed (allow up to 4 hours early for daily crons -> ~0.83 days)
+        return "HOT" if last_check_days >= 0.83 else "SKIP"
 
     card_hash = int(hashlib.sha256(card.id.encode("utf-8")).hexdigest(), 16)
     day_of_year = now.timetuple().tm_yday
@@ -405,17 +407,32 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                             if prices_found[variant]["low"] == 0.0:
                                 prices_found[variant]["low"] = cm_data.get("low") or 0.0
 
-                card_updated = False
+                metadata_updated = False
                 
                 # 0. Backfill dex_id from details if missing
                 if not card.dex_id:
                     dex_ids = details.get("dexId", [])
                     if dex_ids and isinstance(dex_ids, list):
                         card.dex_id = dex_ids[0]
-                        card_updated = True
+                        metadata_updated = True
+                
+                # 1. Backfill Rarity, Category, etc. if missing
+                if not card.rarity:
+                    card.rarity = details.get("rarity")
+                    card.category = details.get("category")
+                    card.illustrator = details.get("illustrator")
+                    card.hp = details.get("hp")
+                    card.types = json.dumps(details.get("types")) if details.get("types") else None
+                    card.stage = details.get("stage")
+                    card.suffix = details.get("suffix")
+                    card.attacks = json.dumps(details.get("attacks")) if details.get("attacks") else None
+                    card.weaknesses = json.dumps(details.get("weaknesses")) if details.get("weaknesses") else None
+                    card.retreat = details.get("retreat")
+                    card.regulation_mark = details.get("regulationMark")
+                    card.legal = json.dumps(details.get("legal")) if details.get("legal") else None
+                    metadata_updated = True
                 
                 # 3. Lore Enrichment (PokéAPI) - Once per unique Dex ID
-                # If flavor_text is strictly None, we haven't checked it yet. If it's "", we checked and found nothing.
                 if card.dex_id and card.flavor_text is None:
                     if "pokeapi_cache" not in stats:
                         stats["pokeapi_cache"] = {}
@@ -431,16 +448,21 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                     card.flavor_text = c_flav
                     if c_evos:
                         card.evolutions = c_evos
-                    card_updated = True
+                    metadata_updated = True
 
+                prices_changed = False
                 for variant, p_vals in prices_found.items():
-                    changed = await update_card_price(db, card.id, variant, p_vals, log, details=details)
+                    changed = await update_card_price(db, card.id, variant, p_vals, log)
                     if changed:
-                        card_updated = True
+                        prices_changed = True
                         stats["variant_updates"][variant] = stats["variant_updates"].get(variant, 0) + 1
 
-                if card_updated:
+                if metadata_updated:
+                    # Update metadata ONLY if structural info changed. Price changes SHOULD NOT
+                    # update this timestamp so that cards can cool down and become STABLE.
                     card.updated_at = datetime.datetime.utcnow()
+                    
+                if metadata_updated or prices_changed:
                     updated_count += 1
                     stats["delta_triggers"] += 1
 
@@ -496,10 +518,9 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     }
 
 
-async def update_card_price(db: Session, card_id: str, variant: str, vals: dict, log: models.SyncLog, details: dict = None) -> bool:
+async def update_card_price(db: Session, card_id: str, variant: str, vals: dict, log: models.SyncLog) -> bool:
     """
-    Returns True if ANY price (Market, Low, High) changed significantly (> 0.01).
-    Also updates the main Card metadata if 'details' is provided (backfill).
+    Returns True if ANY price changed significantly (> 0.01) or if a new price was recorded.
     """
     market = vals.get("market", 0.0)
     low = vals.get("low", 0.0)
@@ -513,32 +534,6 @@ async def update_card_price(db: Session, card_id: str, variant: str, vals: dict,
     t1 = vals.get("trend_1d", 0.0)
     t7 = vals.get("trend_7d", 0.0)
     t30 = vals.get("trend_30d", 0.0)
-
-    # 1. Update Card Metadata (Incremental Backfill)
-    if details:
-        card = db.query(models.Card).filter(models.Card.id == card_id).first()
-        if card:
-            # Basic Metadata
-            if not card.rarity:
-                card.rarity = details.get("rarity")
-                card.category = details.get("category")
-                card.illustrator = details.get("illustrator")
-                card.hp = details.get("hp")
-                card.types = json.dumps(details.get("types")) if details.get("types") else None
-                card.stage = details.get("stage")
-                card.suffix = details.get("suffix")
-                card.attacks = json.dumps(details.get("attacks")) if details.get("attacks") else None
-                card.weaknesses = json.dumps(details.get("weaknesses")) if details.get("weaknesses") else None
-                card.retreat = details.get("retreat")
-                card.regulation_mark = details.get("regulationMark")
-                card.legal = json.dumps(details.get("legal")) if details.get("legal") else None
-            
-            # Additional Discovery (dexId)
-            if not card.dex_id:
-                # TCGDex often provides a list of Dex numbers
-                dex_ids = details.get("dexId", [])
-                if dex_ids and isinstance(dex_ids, list):
-                    card.dex_id = dex_ids[0]
 
     # 2. Update Price
     current = (
