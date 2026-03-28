@@ -1,8 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "mypoke_tgc_sync"
 version = "0.1.0"
 description = "Sync Pokémon TCG data to local database"
 requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff]
 line-length = 120
@@ -27,6 +34,7 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # You can set this to true later as you add more types
 check_untyped_defs = true
+mypy_path = "src"
 
 [[tool.mypy.overrides]]
 # Ignore missing typing stubs for specific libraries
@@ -40,3 +48,4 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = "test_*.py"
+pythonpath = ["src"]

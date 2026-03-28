@@ -8,9 +8,9 @@ import random
 import httpx
 from sqlalchemy.orm import Session
 
-import models
-from utils.phash import calculate_phash
-from pokeapi_client import fetch_pokeapi_data
+from . import models
+from .utils.phash import calculate_phash
+from .pokeapi_client import fetch_pokeapi_data
 
 TCGDEX_API = "https://api.tcgdex.net/v2/en"
 

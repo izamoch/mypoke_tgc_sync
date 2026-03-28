@@ -5,13 +5,13 @@ import os
 import sys
 from datetime import datetime
 
+# Add src to sys.path to allow importing the package
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
 import httpx
 
-import sync
-
-# Import database and sync modules
-# Import database and sync modules
-from database import SessionLocal
+from mypoke_sync import sync
+from mypoke_sync.database import SessionLocal
 
 # Configure logging
 logging.basicConfig(

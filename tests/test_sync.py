@@ -1,8 +1,8 @@
 import datetime
 import hashlib
 import pytest
-from sync import determine_check_strategy
-from models import Card
+from mypoke_sync.sync import determine_check_strategy
+from mypoke_sync.models import Card
 
 
 def test_new_card():

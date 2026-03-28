@@ -50,13 +50,19 @@ Current core logic coverage:
 1. **Environment**:
    ```bash
    cp .env.example .env
+   python -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
    ```
 
 2. **Run Sync**:
+   The logic is now organized in the `src/` directory. You can run the sync job from the root:
    ```bash
    python sync_job.py --force-prices  # Run full database enrichment
    ```
 
-3. **Handover**:
-   See `backend_handover.md` for the definitive SQL DDL and Backend Agent prompt.
+3. **Project Structure**:
+   - `src/mypoke_sync/`: Core package containing database models, sync logic, and PokéAPI client.
+   - `tests/`: Automated test suite.
+   - `data/`: Local SQLite database storage.
+   - `reports/`: Markdown sync reports generated after each run.
