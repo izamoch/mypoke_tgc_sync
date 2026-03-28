@@ -8,6 +8,7 @@ Incremental synchronization engine for Pokémon TCG data, aligned with TCGDex AP
 - **Smart Sync Strategy**: Hybrid value-tier + hash rotation — Premium cards (≥$20) checked daily, Standard ($0-$20) via `hash % 5` (~every 5 days), and cards without price data via `hash % 15` (~every 15 days). Safety nets ensure no card goes unchecked indefinitely.
 - **Supabase Integration**: Native support for PostgreSQL/Supabase with optimized indexes for mobile search.
 - **Auto-Reporting**: Local and webhook-based markdown reports after every sync run.
+- **Local SQLite Backup**: Automatic "overwrite" replication of the full database from Supabase to a local SQLite file (`/data/poke_tgc.sqlite`) at the end of each sync job.
 
 ## 📊 Database Schema (v3)
 

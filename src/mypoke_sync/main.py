@@ -5,9 +5,9 @@ import os
 import sys
 from datetime import datetime
 
-import httpx
 from . import sync
-from .database import SessionLocal
+from .export import run_sqlite_export
+from .database import SessionLocal, DATABASE_URL
 
 # Configure logging
 logging.basicConfig(
@@ -178,6 +178,15 @@ async def run_sync_job(force_prices: bool = False):
         end_time = datetime.utcnow()
     finally:
         generate_report(start_time, datetime.utcnow(), cards_metrics, prices_metrics)
+        
+        # Step 3: Local SQLite Export
+        if os.getenv("DATABASE_URL") and os.getenv("DATABASE_URL").startswith("postgres"):
+            try:
+                logger.info("Executing Phase 3: Local SQLite Export...")
+                run_sqlite_export(os.getenv("DATABASE_URL"))
+                logger.info("Local SQLite Export completed.")
+            except Exception as e:
+                logger.error(f"Failed to perform local SQLite export: {e}")
 
 
 def main():
