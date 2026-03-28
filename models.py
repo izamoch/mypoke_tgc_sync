@@ -15,7 +15,7 @@ class Set(Base):
     card_count = Column(Integer)
     image_url = Column(String)
     release_date = Column(String)  # TCGDex stores it as "YYYY/MM/DD" or "YYYY"
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     cards = relationship("Card", back_populates="set")
 
@@ -48,8 +48,7 @@ class Card(Base):
     flavor_text = Column(String)
     evolutions = Column(String)  # JSON-encoded list of family members
 
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow)
-    last_price_check_at = Column(DateTime, default=None)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     set = relationship("Set", back_populates="cards")
     prices = relationship("CardPrice", back_populates="card")
@@ -82,29 +81,3 @@ class CardPrice(Base):
 
 
 
-
-class ChangeLog(Base):
-    __tablename__ = "change_log"
-
-    version_id = Column(Integer, primary_key=True, autoincrement=True)
-    card_id = Column(String)
-    change_type = Column(String)
-    old_value = Column(String)
-    new_value = Column(String)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-
-class SyncLog(Base):
-    __tablename__ = "sync_log"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    sync_type = Column(String)  # 'prices' or 'cards'
-    status = Column(String)  # 'success' or 'error'
-    started_at = Column(DateTime, default=datetime.datetime.utcnow)
-    finished_at = Column(DateTime)
-    cards_processed = Column(Integer, default=0)
-    cards_added = Column(Integer, default=0)
-    sets_added = Column(Integer, default=0)
-    prices_updated = Column(Integer, default=0)
-    errors_count = Column(Integer, default=0)
-    error_details = Column(String)

@@ -31,11 +31,11 @@ def determine_check_strategy(card: models.Card, max_market_price: float = 0.0) -
     now = datetime.datetime.utcnow()
 
     # 1. Never checked? -> IMMEDIATE
-    if not card.last_price_check_at:
+    if not card.updated_at:
         return "NEW"
 
     # Use total_seconds to get fractional days instead of integer flooring
-    last_check_days = (now - card.last_price_check_at).total_seconds() / 86400.0
+    last_check_days = (now - card.updated_at).total_seconds() / 86400.0
     card_hash = int(hashlib.sha256(card.id.encode("utf-8")).hexdigest(), 16)
     day_of_year = now.timetuple().tm_yday
 
@@ -79,9 +79,6 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
     2. Fetch Cards List -> Filter against DB -> Insert NEW cards only (calculating pHash).
     """
     start_time = datetime.datetime.utcnow()
-    log = models.SyncLog(sync_type="cards", started_at=start_time, status="running")
-    db.add(log)
-    db.commit()
 
     print(f"[{start_time}] Starting Incremental Sets/Cards Sync...")
     errors = []
@@ -116,7 +113,6 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
                     new_sets_count += 1
 
             db.commit()
-            log.sets_added = new_sets_count
             print(f"Sets synced. Added {new_sets_count} new sets.")
 
         except Exception as e:
@@ -142,7 +138,6 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
             if card_limit:
                 new_cards_summary = new_cards_summary[:card_limit]
 
-            log.cards_processed = len(new_cards_summary)
             metrics["cards_processed"] = len(new_cards_summary)
             print(f"Found {len(new_cards_summary)} new cards to process.")
 
@@ -215,19 +210,7 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
                         # updated_at defaults to now
                     )
                     db.add(new_card)
-                    log.cards_added += 1
                     metrics["new_cards"] += 1
-
-                    # Initial Price (Optional: can be handled by sync_prices, but nice to have initialized)
-                    # We skip it here to strictly separate logic: sync_prices will pick it up because it has no price.
-
-                    db.add(
-                        models.ChangeLog(
-                            card_id=details["id"],
-                            change_type="new_card",
-                            new_value=json.dumps({"name": details["name"]}),
-                        )
-                    )
                     db.commit()
 
                 except Exception as e:
@@ -239,11 +222,6 @@ async def sync_sets_and_cards(db: Session, card_limit: int = None) -> dict:
             errors.append(f"Cards list sync error: {str(e)}")
             metrics["errors"].append(f"Cards list sync error: {str(e)}")
 
-    log.status = "success" if not errors else "error"
-    log.error_details = "\n".join(errors[-50:]) if errors else None  # Limit error log size
-    log.errors_count = len(errors)
-    log.finished_at = datetime.datetime.utcnow()
-    db.commit()
     print("Sets/Cards Sync Finished.")
 
     metrics["new_sets"] = new_sets_count
@@ -254,11 +232,6 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     """
     Updates prices for cards based on Temperature/Hashing strategy.
     """
-    start_time = datetime.datetime.utcnow()
-    log = models.SyncLog(sync_type="prices", started_at=start_time, status="running")
-    db.add(log)
-    db.commit()
-
     print(f"[{start_time}] Starting Price Sync (Smart Strategy)...")
     errors = []
 
@@ -286,7 +259,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     query = (
         db.query(
             models.Card.id,
-            models.Card.last_price_check_at,
+            models.Card.updated_at,
             func.coalesce(max_price_subq.c.max_market, 0.0).label("max_market")
         )
         .outerjoin(max_price_subq, models.Card.id == max_price_subq.c.card_id)
@@ -295,7 +268,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     for cid, last_check, max_market in query.all():
         temp_card = models.Card(
             id=cid,
-            last_price_check_at=last_check,
+            updated_at=last_check,
         )
         strat = determine_check_strategy(temp_card, float(max_market or 0.0))
         if force_prices or strat != "SKIP":
@@ -303,7 +276,6 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
             strat_stats[strat] = strat_stats.get(strat, 0) + 1
 
     total_to_check = len(card_ids_to_check)
-    log.cards_processed = total_to_check
 
     print(f"Total Cards: {total_cards}. Scheduled for check: {total_to_check}")
     print(
@@ -329,7 +301,6 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
         for i, cid in enumerate(card_ids_to_check, 1):
             if SHOULD_STOP:
                 print("Sync stopping explicitly (Prices loop).")
-                log.status = "stopped"
                 break
                 
             card = db.query(models.Card).filter(models.Card.id == cid).first()
@@ -351,7 +322,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
 
                 response = await client.get(f"{TCGDEX_API}/cards/{card.id}")
                 if response.status_code == 404:
-                    card.last_price_check_at = datetime.datetime.utcnow()
+                    card.updated_at = datetime.datetime.utcnow()
                     db.commit()
                     continue
 
@@ -359,7 +330,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                 response.raise_for_status()
                 details = response.json()
 
-                card.last_price_check_at = datetime.datetime.utcnow()
+                card.updated_at = datetime.datetime.utcnow()
 
                 pricing = details.get("pricing")
                 if not pricing or not isinstance(pricing, dict):
@@ -460,22 +431,15 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                 prices_changed = False
                 significant_price_change = False
                 for variant, p_vals in prices_found.items():
-                    changed, sig = await update_card_price(db, card.id, variant, p_vals, log)
+                    changed, sig = await update_card_price(db, card.id, variant, p_vals)
                     if changed:
                         prices_changed = True
                         stats["variant_updates"][variant] = stats["variant_updates"].get(variant, 0) + 1
                     if sig:
                         significant_price_change = True
 
-                if metadata_updated:
-                    # Update card timestamp ONLY for structural metadata changes.
-                    # Price changes no longer affect this timestamp (tier strategy is value-based).
-                    card.updated_at = datetime.datetime.utcnow()
-                    
-                if metadata_updated or prices_changed:
-                    updated_count += 1
-                    stats["delta_triggers"] += 1
-
+                # Force updated_at refresh on every check to maintain rotation strategy state
+                card.updated_at = datetime.datetime.utcnow()
                 db.commit()
 
             except Exception as e:
@@ -485,11 +449,6 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
                 # Keep errors list small for DB log
                 if len(errors) < 50:
                     errors.append(f"{card.id}: {str(e)}")
-
-    log.prices_updated = updated_count
-    log.status = "success"
-    log.finished_at = datetime.datetime.utcnow()
-    db.commit()
 
     # --- FINAL REPORT ---
     print("\n" + "=" * 40)
@@ -528,7 +487,7 @@ async def sync_prices(db: Session, force_prices: bool = False) -> dict:
     }
 
 
-async def update_card_price(db: Session, card_id: str, variant: str, vals: dict, log: models.SyncLog) -> tuple[bool, bool]:
+async def update_card_price(db: Session, card_id: str, variant: str, vals: dict) -> tuple[bool, bool]:
     """
     Returns (any_changed, is_significant).
     True if ANY price changed significantly (> 0.01), and a second boolean for major price swings (> 5% or > $0.50).
@@ -602,11 +561,5 @@ async def update_card_price(db: Session, card_id: str, variant: str, vals: dict,
         current.trend_7d = t7
         current.trend_30d = t30
 
-        if any_changed:
-            db.add(
-                models.ChangeLog(
-                    card_id=card_id, change_type="price", old_value=str(current.market), new_value=str(market)
-                )
-            )
 
     return any_changed, is_significant

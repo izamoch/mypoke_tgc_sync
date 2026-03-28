@@ -7,7 +7,7 @@ from models import Card
 
 def test_new_card():
     """Card never checked -> NEW regardless of price tier"""
-    card = Card(id="test-new", last_price_check_at=None)
+    card = Card(id="test-new", updated_at=None)
     assert determine_check_strategy(card, max_market_price=50.0) == "NEW"
     assert determine_check_strategy(card, max_market_price=5.0) == "NEW"
     assert determine_check_strategy(card, max_market_price=0.0) == "NEW"
@@ -18,7 +18,7 @@ def test_premium_daily_check():
     now = datetime.datetime.utcnow()
     card = Card(
         id="test-premium",
-        last_price_check_at=now - datetime.timedelta(hours=22),
+        updated_at=now - datetime.timedelta(hours=22),
     )
     assert determine_check_strategy(card, max_market_price=25.0) == "PREMIUM"
 
@@ -28,7 +28,7 @@ def test_premium_skip_recent():
     now = datetime.datetime.utcnow()
     card = Card(
         id="test-premium-skip",
-        last_price_check_at=now - datetime.timedelta(hours=5),
+        updated_at=now - datetime.timedelta(hours=5),
     )
     assert determine_check_strategy(card, max_market_price=100.0) == "SKIP"
 
@@ -45,7 +45,7 @@ def test_standard_hash_hit():
         if (card_hash % 5) == (day_of_year % 5):
             card = Card(
                 id=cid,
-                last_price_check_at=now - datetime.timedelta(days=2),
+                updated_at=now - datetime.timedelta(days=2),
             )
             assert determine_check_strategy(card, max_market_price=5.0) == "STANDARD"
             return
@@ -64,7 +64,7 @@ def test_standard_hash_miss():
         if (card_hash % 5) != (day_of_year % 5):
             card = Card(
                 id=cid,
-                last_price_check_at=now - datetime.timedelta(days=2),
+                updated_at=now - datetime.timedelta(days=2),
             )
             assert determine_check_strategy(card, max_market_price=5.0) == "SKIP"
             return
@@ -76,7 +76,7 @@ def test_standard_safety():
     now = datetime.datetime.utcnow()
     card = Card(
         id="test-standard-safety",
-        last_price_check_at=now - datetime.timedelta(days=10),
+        updated_at=now - datetime.timedelta(days=10),
     )
     assert determine_check_strategy(card, max_market_price=8.0) == "STANDARD_SAFETY"
 
@@ -92,7 +92,7 @@ def test_no_price_hash_hit():
         if (card_hash % 15) == (day_of_year % 15):
             card = Card(
                 id=cid,
-                last_price_check_at=now - datetime.timedelta(days=5),
+                updated_at=now - datetime.timedelta(days=5),
             )
             assert determine_check_strategy(card, max_market_price=0.0) == "NO_PRICE"
             return
@@ -104,7 +104,7 @@ def test_no_price_safety():
     now = datetime.datetime.utcnow()
     card = Card(
         id="test-noprice-safety",
-        last_price_check_at=now - datetime.timedelta(days=25),
+        updated_at=now - datetime.timedelta(days=25),
     )
     assert determine_check_strategy(card, max_market_price=0.0) == "NO_PRICE_SAFETY"
 
@@ -114,7 +114,7 @@ def test_premium_boundary():
     now = datetime.datetime.utcnow()
     card = Card(
         id="test-boundary",
-        last_price_check_at=now - datetime.timedelta(hours=22),
+        updated_at=now - datetime.timedelta(hours=22),
     )
     assert determine_check_strategy(card, max_market_price=20.0) == "PREMIUM"
     # $19.99 -> STANDARD tier, result depends on hash match
