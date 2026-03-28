@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "Sync Pokémon TCG data to local database"
 requires-python = ">=3.11"
 
+[project.scripts]
+mypoke-sync = "mypoke_sync.main:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

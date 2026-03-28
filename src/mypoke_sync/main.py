@@ -5,13 +5,9 @@ import os
 import sys
 from datetime import datetime
 
-# Add src to sys.path to allow importing the package
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-
 import httpx
-
-from mypoke_sync import sync
-from mypoke_sync.database import SessionLocal
+from . import sync
+from .database import SessionLocal
 
 # Configure logging
 logging.basicConfig(
@@ -184,10 +180,18 @@ async def run_sync_job(force_prices: bool = False):
         generate_report(start_time, datetime.utcnow(), cards_metrics, prices_metrics)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Pokemon TCG Backend Synchronization Job")
     parser.add_argument("--force-prices", action="store_true", help="Force price sync regardless of temperature")
     args = parser.parse_args()
 
     logger.info("Initializing Sync Job environment...")
-    asyncio.run(run_sync_job(force_prices=args.force_prices))
+    try:
+        asyncio.run(run_sync_job(force_prices=args.force_prices))
+    except KeyboardInterrupt:
+        logger.info("Sync Job interrupted by user.")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

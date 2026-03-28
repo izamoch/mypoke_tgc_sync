@@ -56,9 +56,14 @@ Current core logic coverage:
    ```
 
 2. **Run Sync**:
-   The logic is now organized in the `src/` directory. You can run the sync job from the root:
+   The logic is now organized in the `src/` directory. You can run the sync job as a module:
    ```bash
-   python sync_job.py --force-prices  # Run full database enrichment
+   export PYTHONPATH=$PYTHONPATH:$(pwd)/src
+   python -m mypoke_sync.main --force-prices
+   ```
+   Or, if you installed the package in editable mode (`pip install -e .`):
+   ```bash
+   mypoke-sync --force-prices
    ```
 
 3. **Project Structure**:

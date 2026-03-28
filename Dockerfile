@@ -13,5 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project files
 COPY . .
 
-# Run the sync job by default
-CMD ["python", "sync_job.py"]
+# Set PYTHONPATH to include src
+ENV PYTHONPATH=/app/src
+
+# Run the sync job by default using the module entry point
+CMD ["python", "-m", "mypoke_sync.main"]
