@@ -1,24 +1,34 @@
 import httpx
-import asyncio
 import logging
+from mypoke_sync.utils.retry import with_async_retry
 
 logger = logging.getLogger(__name__)
 
 async def fetch_pokeapi_data(dex_id: int):
     """
-    Fetches flavor text (EN) and evolution chain from PokéAPI.
+    Fetches flavor text (EN) and evolution chain from PokéAPI with retry logic.
     """
     if not dex_id or dex_id <= 0:
         return None, None
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            # 1. Fetch Species Data
-            res = await client.get(f"https://pokeapi.co/api/v2/pokemon-species/{dex_id}")
-            if res.status_code != 200:
-                return None, None
+            # Helper to perform GET and raise for status (needed for with_async_retry)
+            async def get_json(url: str):
+                res = await client.get(url)
+                res.raise_for_status()
+                return res.json()
+
+            # 1. Fetch Species Data with retry
+            data = await with_async_retry(
+                get_json, 
+                f"https://pokeapi.co/api/v2/pokemon-species/{dex_id}",
+                max_retries=3,
+                base_delay=2.0
+            )
             
-            data = res.json()
+            if not data:
+                return None, None
             
             # Extract English Flavor Text
             flavor_text = ""
@@ -31,9 +41,15 @@ async def fetch_pokeapi_data(dex_id: int):
             evo_url = data.get("evolution_chain", {}).get("url")
             evolutions = []
             if evo_url:
-                evo_res = await client.get(evo_url)
-                if evo_res.status_code == 200:
-                    evo_data = evo_res.json()
+                # Fetch evolution chain data with retry
+                evo_data = await with_async_retry(
+                    get_json,
+                    evo_url,
+                    max_retries=2,
+                    base_delay=2.0
+                )
+                
+                if evo_data:
                     chain = evo_data.get("chain", {})
                     
                     def traverse_chain(node):
@@ -47,6 +63,12 @@ async def fetch_pokeapi_data(dex_id: int):
             
             return flavor_text, evolutions
 
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.warning(f"PokéAPI: Species data for dex_id {dex_id} not found (404).")
+            else:
+                logger.error(f"PokéAPI: HTTP error fetching data for dex_id {dex_id}: {e}")
+            return None, None
         except Exception as e:
-            logger.error(f"Error fetching PokéAPI data for dex_id {dex_id}: {e}")
+            logger.error(f"Unexpected error fetching PokéAPI data for dex_id {dex_id}: {e}")
             return None, None
